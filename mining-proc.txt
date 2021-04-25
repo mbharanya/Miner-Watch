@@ -1,1 +1,1 @@
-PhoenixMiner.exe
+winver.exe

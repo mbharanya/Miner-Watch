@@ -2,17 +2,25 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mitchellh/go-ps"
 )
 
 func main() {
+	miningProcessPid := startMiningProcess()
+	if miningProcessPid < 0 {
+		log.Println("Could not start mining process")
+		return
+	}
+
 	processList, err := ps.Processes()
 	if err != nil {
 		log.Println("ps.Processes() Failed")
@@ -31,50 +39,62 @@ func main() {
 		// log.Printf("%d\t%s\n", process.Pid(), process.Executable())
 		processName := process.Executable()
 		if arrayContainsString(strings.TrimSpace(processName), lines) {
-			log.Println(processName)
-			killMiningProcess()
-		}else{
+			log.Println(processName + " was found, killing mining process")
+			killMiningProcess(miningProcessPid)
+		} else {
 			// log.Println("Did not find "+processName + " to kill")
 		}
 	}
 }
 
-func killMiningProcess() {
-	mining_proc_list, err := readLines("mining-proc.txt")
-
-	processList, err := ps.Processes()
+func startMiningProcess() int {
+	// cmd := exec.Command("U:\\Work\\Ethereum\\PhoenixMiner_5.5c_Windows_AMD_NVIDIA.Password-phoenix\\start.bat")
+	miningProcesses, err := readLines("mining-proc.txt")
 	if err != nil {
-		log.Println("ps.Processes() Failed")
+		log.Println("Can't start mining process from mining-proc.txt: " + err.Error())
+		return -1
+	}
+
+	miningProcess := miningProcesses[0]
+	cmd := exec.Command(miningProcess)
+	if err := cmd.Start(); err != nil {
+		fmt.Println(">>0", err)
+		return -1
+	}
+	log.Println("mining process pid: ", cmd.Process.Pid)
+	return cmd.Process.Pid
+}
+
+func killMiningProcess(miningProcessPid int) {
+	process, err := ps.FindProcess(miningProcessPid)
+	if err != nil {
+		fmt.Println(">>0", err)
 		return
 	}
-	for x := range processList {
-		var process ps.Process
-		process = processList[x]
-		// log.Printf("%d\t%s\n", process.Pid(), process.Executable())
-		processName := process.Executable()
-		if arrayContainsString(processName, mining_proc_list) {
-			log.Println("Killing " + processName)
 
-			if runtime.GOOS == "windows" {
-				kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(process.Pid()))
-				err := kill.Run()
-				if err != nil {
-					log.Fatalf("Error killing process " + err.Error())
-				}
+	log.Println("Killing " + strconv.Itoa(process.Pid()) + "\t" + process.Executable())
 
-			} else {
-				kill := exec.Command("kill", "-15", strconv.Itoa(process.Pid()))
-				err := kill.Run()
-				if err != nil {
-					log.Fatalf("Error killing process " + err.Error())
-				}
+	time.Sleep(1 * time.Second)
 
-			}
-			log.Println("process was killed")
-		}
-		// do os.* stuff on the pid
+	var killCommand []string
+
+	if runtime.GOOS == "windows" {
+		killCommand = []string{"taskkill", "/T", "/F", "/PID"}
+	} else {
+		killCommand = []string{"kill", "-15"}
+	}
+	killCommand = append(killCommand, strconv.Itoa(process.Pid()))
+	log.Println(killCommand)
+
+	kill := exec.Command(killCommand[0], killCommand[1:]...)
+
+	runErr := kill.Run()
+
+	if runErr != nil {
+		log.Fatalf("Error killing process " + runErr.Error())
 	}
 
+	log.Println("process was killed")
 }
 
 // readLines reads a whole file into memory
