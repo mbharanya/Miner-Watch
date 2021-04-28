@@ -14,49 +14,85 @@ import (
 	"github.com/mitchellh/go-ps"
 )
 
+var miningProcessPid int
+
 func main() {
-	miningProcessPid := startMiningProcess()
+	miningProcessPid = startMiningProcess()
 	if miningProcessPid < 0 {
 		log.Println("Could not start mining process")
 		return
 	}
+	processStopped := ""
+	minerIsRunning := true
 
-	processList, err := ps.Processes()
-	if err != nil {
-		log.Println("ps.Processes() Failed")
-		return
-	}
-
-	lines, err := readLines("stoplist.txt")
-	if err != nil {
-		log.Fatalf("readLines: %s", err)
-	}
-
-	// map ages
-	for x := range processList {
-		var process ps.Process
-		process = processList[x]
-		// log.Printf("%d\t%s\n", process.Pid(), process.Executable())
-		processName := process.Executable()
-		if arrayContainsString(strings.TrimSpace(processName), lines) {
-			log.Println(processName + " was found, killing mining process")
-			killMiningProcess(miningProcessPid)
-		} else {
-			// log.Println("Did not find "+processName + " to kill")
+	for ok := true; ok; ok = true {
+		processList, err := ps.Processes()
+		if err != nil {
+			log.Println("ps.Processes() Failed")
+			return
 		}
+
+		lines, err := readLines("stoplist.txt")
+		if err != nil {
+			log.Fatalf("readLines: %s", err)
+		}
+
+		var runningProcessNames []string
+
+		// map ages
+		for x := range processList {
+			var process ps.Process
+			process = processList[x]
+			// log.Printf("%d\t%s\n", process.Pid(), process.Executable())
+			processName := strings.TrimSpace(process.Executable())
+			runningProcessNames = append(runningProcessNames, processName)
+		}
+
+		if minerIsRunning {
+			restartMinerIfCrashed()
+			for _, stopListedProcess := range lines {
+				if arrayContainsString(stopListedProcess, runningProcessNames) {
+					log.Println(stopListedProcess + " was found, killing mining process")
+					killMiningProcess(miningProcessPid)
+					log.Println("Killed it, watching for changes...")
+					processStopped = stopListedProcess
+					minerIsRunning = false
+					break
+				}
+			}
+		} else {
+			if !arrayContainsString(processStopped, runningProcessNames) {
+				log.Println(processStopped + " is not running anymore, start mining")
+				miningProcessPid = startMiningProcess()
+				processStopped = ""
+				minerIsRunning = true
+			}
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+}
+
+func restartMinerIfCrashed() {
+	process, err := ps.FindProcess(miningProcessPid)
+	if err != nil || process == nil {
+		log.Println("Miner seems to have crashed, restarting it")
+		miningProcessPid = startMiningProcess()
 	}
 }
 
 func startMiningProcess() int {
-	// cmd := exec.Command("U:\\Work\\Ethereum\\PhoenixMiner_5.5c_Windows_AMD_NVIDIA.Password-phoenix\\start.bat")
-	miningProcesses, err := readLines("mining-proc.txt")
+	miningProcesses, err := readLines("mining-proc2.txt")
 	if err != nil {
 		log.Println("Can't start mining process from mining-proc.txt: " + err.Error())
 		return -1
 	}
 
 	miningProcess := miningProcesses[0]
-	cmd := exec.Command(miningProcess)
+	cmd := exec.Command("cmd.exe", "/C", miningProcess)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		fmt.Println(">>0", err)
 		return -1
@@ -68,7 +104,9 @@ func startMiningProcess() int {
 func killMiningProcess(miningProcessPid int) {
 	process, err := ps.FindProcess(miningProcessPid)
 	if err != nil {
-		fmt.Println(">>0", err)
+		log.Println("Could not find running PID " + strconv.Itoa(miningProcessPid) + err.Error())
+		return
+	} else if process == nil {
 		return
 	}
 
